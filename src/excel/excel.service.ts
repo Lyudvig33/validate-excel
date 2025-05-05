@@ -89,7 +89,7 @@ export class ExcelService {
     };
   }
 
-  async getGroupedByDate(): Promise<{ date: string; items: RowEntity[] }[]> {
+  async getGroupedByDate(limit = 100): Promise<{ date: string; items: RowEntity[] }[]> {
     const rows = await this.rowRepository.find();
     const grouped: Record<string, RowEntity[]> = {};
 
@@ -105,6 +105,7 @@ export class ExcelService {
         date,
         items,
       }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .slice(0,limit)
   }
 }

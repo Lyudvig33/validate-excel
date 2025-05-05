@@ -4,6 +4,7 @@ import {
   HttpException,
   HttpStatus,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -51,7 +52,8 @@ export class ExcelController {
   }
 
   @Get('rows')
-  async getGroupedRows() {
-    return this.excelService.getGroupedByDate();
+  async getGroupedRows(@Query('limit') limit?: string) {
+    const parsedLimit = limit ? parseInt(limit, 10) : 100;
+    return this.excelService.getGroupedByDate(parsedLimit);
   }
 }
