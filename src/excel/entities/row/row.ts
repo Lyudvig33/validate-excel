@@ -11,6 +11,6 @@ export class RowEntity {
   @Column()
   name: string;
 
-  @Column()
+  @Column({ type: 'date' })
   date: Date;
 }

@@ -1,5 +1,6 @@
 import {
   Controller,
+  Get,
   HttpException,
   HttpStatus,
   Post,
@@ -47,5 +48,10 @@ export class ExcelController {
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
+  }
+
+  @Get('rows')
+  async getGroupedRows() {
+    return this.excelService.getGroupedByDate();
   }
 }

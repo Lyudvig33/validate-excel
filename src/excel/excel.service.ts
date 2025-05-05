@@ -1,78 +1,110 @@
-import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { RowEntity } from './entities/row/row';
 import { Repository } from 'typeorm';
-import { parseExcel } from './utils/excel-parser';
+import { parseExcel, RawExcelRow } from './utils/excel-parser';
+import { Worker } from 'worker_threads';
 import * as fs from 'fs';
 import * as path from 'path';
+import { v4 as uuidv4 } from 'uuid';
+import { RedisService } from 'src/redis/redis.service';
 
 @Injectable()
 export class ExcelService {
-  private readonly logger = new Logger(ExcelService.name);
-
   constructor(
-    @InjectRepository(RowEntity) private rowRepository: Repository<RowEntity>,
+    @InjectRepository(RowEntity)
+    private rowRepository: Repository<RowEntity>,
+    private redisService: RedisService,
   ) {}
 
-  async importExcel(filePath: string) {
-    try {
-      this.logger.log(`Starting to process the file: ${filePath}`);
+  async runWorker(
+    chunk: RawExcelRow[],
+  ): Promise<{ validRows: RowEntity[]; errors: string[] }> {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(path.join(__dirname, 'excel-worker.js'), {
+        workerData: { chunk }, // Send chunk to worker
+      });
 
-      const { validRows, errors } = await parseExcel(filePath);
-      this.logger.log(
-        `Parsed rows: ${validRows.length}, Errors: ${errors.length}`,
-      );
-
-      const rowsToSave = validRows
-        .map((r) => {
-          if (!r.sourceId || !r.name || !r.date) {
-            this.logger.warn(`Skipping invalid row: ${JSON.stringify(r)}`);
-            return null; // Skip a line if the data is incomplete
-          }
-          const row = new RowEntity();
-          row.sourceId = r.sourceId;
-          row.name = r.name;
-          row.date = new Date(r.date); // Convert a date to a Date object
-          return row;
-        })
-        .filter((row) => row !== null); // Removing empty rows
-
-      const batchSize = 1000;
-      const total = rowsToSave.length;
-
-      if (total > 0) {
-        this.logger.log(`Saving ${total} rows in batches of ${batchSize}`);
-
-        for (let i = 0; i < total; i += batchSize) {
-          const chunk = rowsToSave.slice(i, i + batchSize);
-          await this.rowRepository.insert(chunk);
-          this.logger.log(
-            `Saved batch ${i / batchSize + 1}: ${chunk.length} rows`,
-          );
+      worker.on('message', resolve); // Receive result
+      worker.on('error', reject); // Handle errors
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Worker Stoped with exit code ${code}`)); // Handle non-zero exit
         }
-      } else {
-        this.logger.warn('No valid rows to save');
-      }
+      });
+    });
+  }
 
-      const errorPath = path.join(process.cwd(), 'result.txt');
-      fs.writeFileSync(errorPath, errors.join('\n'), 'utf-8');
-      this.logger.log(`Error report saved to ${errorPath}`);
+  async importExcel(
+    filePath: string,
+  ): Promise<{ message: string; taskId: string; errorFilePath: string }> {
+    const { validRows: allRows, errors: parseErrors } =
+      await parseExcel(filePath); // Parse Excel file
 
-      // delete after processing
-      fs.unlinkSync(filePath);
-      this.logger.log(`File ${filePath} has been deleted after processing`);
+    const chunkSize = 10000; // Define chunk size for processing
+    const taskId = `import:${uuidv4()}`; // Generate unique task ID
+    const chunks: RawExcelRow[][] = [];
 
-      return {
-        imported: rowsToSave.length,
-        errors: errors.length,
-        resultPath: 'result.txt',
-      };
-    } catch (err) {
-      this.logger.error('Error processing the file', err.stack);
-      throw new HttpException(
-        'Error processing the file',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
+    for (let i = 0; i < allRows.length; i += chunkSize) {
+      chunks.push(allRows.slice(i, i + chunkSize)); // Split rows into chunks
     }
+
+    const allValidRows: RowEntity[] = [];
+    const allErrors: string[] = [...parseErrors];
+
+    let totalProcessedRows = 0;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      try {
+        const result = await this.runWorker(chunk); // Process chunk in worker
+        allValidRows.push(...result.validRows); // Collect valid rows
+        allErrors.push(...result.errors); // Collect errors
+
+        totalProcessedRows += chunk.length; // Update total processed rows
+        const redisKey = `import:progress:${path.basename(filePath)}`; // Define Redis key for progress
+        await this.redisService.set(redisKey, totalProcessedRows.toString()); // save progress in Redis
+      } catch (error) {
+        console.error(`Worker failed for chunk ${i + 1}`, error);
+        allErrors.push(`Chunk ${i + 1}: Worker failed - ${error.message}`);
+      }
+    }
+
+    const saveChunks: RowEntity[][] = []; 
+    for (let i = 0; i < allValidRows.length; i += chunkSize) {
+      saveChunks.push(allValidRows.slice(i, i + chunkSize)); // Split into smaller chunks for saving
+    }
+
+    await Promise.all(
+      saveChunks.map((chunk) => this.rowRepository.insert(chunk)),
+    );
+
+    const resultPath = path.join(process.cwd(), 'result.txt');
+    fs.writeFileSync(resultPath, allErrors.join('\n'), 'utf-8');
+
+    return {
+      message: 'Import completed',
+      taskId,
+      errorFilePath: resultPath,
+    };
+  }
+
+  async getGroupedByDate(): Promise<{ date: string; items: RowEntity[] }[]> {
+    const rows = await this.rowRepository.find();
+    const grouped: Record<string, RowEntity[]> = {};
+
+    for (const row of rows) {
+      const dateObj = new Date(row.date);
+      const dateKey = dateObj.toISOString().split('T')[0]; //format date as yyyy-mm-dd
+      if (!grouped[dateKey]) grouped[dateKey] = [];
+      grouped[dateKey].push(row);
+    }
+
+    return Object.entries(grouped)
+      .map(([date, items]) => ({
+        date,
+        items,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
   }
 }

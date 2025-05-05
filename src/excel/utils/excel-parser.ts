@@ -1,65 +1,35 @@
 import * as ExcelJS from 'exceljs';
 
-export interface ExcelRow {
+export interface RawExcelRow {
   rowNumber: number;
-  sourceId: number;
-  name: string;
-  date: Date;
+  sourceId: any;
+  name: any;
+  date: any;
 }
 
 export async function parseExcel(filePath: string): Promise<{
-  validRows: ExcelRow[];
+  validRows: RawExcelRow[];
   errors: string[];
 }> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(filePath);
-  const worksheet = workbook.worksheets[0];
+  const sheet = workbook.worksheets[0];
 
-  const validRows: ExcelRow[] = [];
+  const rows: RawExcelRow[] = [];
   const errors: string[] = [];
 
-  worksheet.eachRow((row, index) => {
-    if (index === 1) return;
-    const sourceIdRaw = row.getCell(1).value;
-    const nameRaw = row.getCell(2).value;
-    const dateRaw = row.getCell(3).value;
+  sheet.eachRow((row, index) => {
+    if (index === 1) return; // skip header row
 
-    const rowErrors: string[] = [];
+    const rowData: RawExcelRow = {
+      rowNumber: index,
+      sourceId: row.getCell(1).value,
+      name: row.getCell(2).value,
+      date: row.getCell(3).value,
+    }; // TODO VALIDATE HERE WITH JOI 
 
-    const sourceId = Number(sourceIdRaw);
-    if (isNaN(sourceId)) rowErrors.push('invalid sourceId');
-
-    const name = typeof nameRaw === 'string' ? nameRaw.trim() : '';
-    if (!name) rowErrors.push('invalid name');
-
-    let date: Date | null = null;
-
-    if (dateRaw instanceof Date) {
-      date = dateRaw;
-    } else if (typeof dateRaw === 'string') {
-      date = parseDate(dateRaw);
-    }
-    if (!date) rowErrors.push('invalid date');
-
-    if (rowErrors.length > 0) {
-      errors.push(`${index} - ${rowErrors.join(', ')}`);
-    } else {
-      validRows.push({
-        rowNumber: index,
-        sourceId,
-        name,
-        date: date!,
-      });
-    }
+    rows.push(rowData); // collect parsed rows
   });
 
-  return { validRows, errors };
-}
-
-function parseDate(str: string): Date | null {
-  const parts = str.split('.');
-  if (parts.length !== 3) return null;
-  const [day, month, year] = parts.map(Number);
-  const date = new Date(year, month - 1, day);
-  return isNaN(date.getTime()) ? null : date;
+  return { validRows: rows, errors };
 }
