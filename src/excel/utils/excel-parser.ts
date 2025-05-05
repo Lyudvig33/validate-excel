@@ -26,7 +26,7 @@ export async function parseExcel(filePath: string): Promise<{
       sourceId: row.getCell(1).value,
       name: row.getCell(2).value,
       date: row.getCell(3).value,
-    }; // TODO VALIDATE HERE WITH JOI 
+    }; 
 
     rows.push(rowData); // collect parsed rows
   });
