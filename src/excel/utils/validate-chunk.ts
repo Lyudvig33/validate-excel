@@ -18,13 +18,14 @@ export function validateChunkRows(chunk: any[]): {
     if (!name) rowErrors.push('invalid name');
 
     let date: Date | null = null;
+
     if (typeof row.date === 'string') {
       date = parseDate(row.date); // Parse custom string format
     } else if (row.date instanceof Date) {
       date = row.date;
     }
-
     if (!date) rowErrors.push('invalid date');
+    
 
     if (rowErrors.length) {
       errors.push(`${rowNumber} - ${rowErrors.join(', ')}`); // Add error info

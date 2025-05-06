@@ -64,6 +64,7 @@ export class ExcelService {
         totalProcessedRows += chunk.length; // Update total processed rows
         const redisKey = `import:progress:${path.basename(filePath)}`; // Define Redis key for progress
         await this.redisService.set(redisKey, totalProcessedRows.toString()); // save progress in Redis
+        
       } catch (error) {
         console.error(`Worker failed for chunk ${i + 1}`, error);
         allErrors.push(`Chunk ${i + 1}: Worker failed - ${error.message}`);
@@ -89,7 +90,7 @@ export class ExcelService {
     };
   }
 
-  async getGroupedByDate(limit = 100): Promise<{ date: string; items: RowEntity[] }[]> {
+  async getGroupedByDate(limit = 10): Promise<{ date: string; items: RowEntity[] }[]> {
     const rows = await this.rowRepository.find();
     const grouped: Record<string, RowEntity[]> = {};
 

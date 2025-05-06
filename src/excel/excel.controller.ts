@@ -40,15 +40,6 @@ export class ExcelController {
     if (!file) {
       throw new HttpException('File is required', HttpStatus.BAD_REQUEST);
     }
-
-    try {
-      return this.excelService.importExcel(file.path);
-    } catch (error) {
-      throw new HttpException(
-        'Failed to import Excel file',
-        HttpStatus.INTERNAL_SERVER_ERROR,
-      );
-    }
   }
 
   @Get('rows')
